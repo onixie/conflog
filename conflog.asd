@@ -5,7 +5,7 @@
   :description "Conflict Addressing"
   :author "Nixie <onixie@gmail.com>"
   :license "LGPL"
-  :depends-on (#:paiprolog #:alexandria)
+  :depends-on (#:paiprolog #:alexandria #:anaphora)
   :components ((:file "package")
                (:file "conflog")))
 
