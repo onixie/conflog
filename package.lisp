@@ -3,17 +3,17 @@
 (defpackage #:conflog
   (:use #:cl
 	#:paiprolog
-	#:alexandria
-	#:anaphora)
+	#:alexandria)
   (:shadowing-import-from #:paiprolog
-			  #:deref
-			  #:unify! 
-			  #:call/1 
-			  #:unbound-var-p
 			  #:*trail*
 			  #:add-clause
-			  #:def-prolog-compiler-macro
-			  #:compile-body
 			  #:args
-			  #:predicate))
+			  #:call/1 
+			  #:compile-body
+			  #:def-prolog-compiler-macro
+			  #:deref
+			  #:predicate
+			  #:unbound-var-p
+			  #:unify! 
+			  #:variable-p))
 
