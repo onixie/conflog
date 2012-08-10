@@ -74,28 +74,24 @@
 		  (defun in-apply? (g) (prog1 (gethash g ,in nil) (setf (gethash g ,in) nil)))))))
   (define-apply-utils))
 
-(define-primitive apply/1 (?g cont)
-  (in-apply! (predicate ?g))
-  (call/1 ?g cont))
+(define-primitive apply/1 (goal cont)
+  (in-apply! (predicate goal))
+  (call/1 goal (lambda () (sstatus/2 (predicate goal) (first (args goal)) cont))))
 
 (define-primitive lookup/2 (pred var cont)
   (when (not (unbound-var-p pred))
     (let ((s (status (deref pred))))
-      (if (found? s)
-	  (when (unify! var s)
-	    (funcall cont))
-	  (call/1 `(and (apply (,pred ?X)) (= ,var ?X)) cont)))))
+      (unless (found? s)
+	(apply/1 `(,(deref pred) ,(?)) #'ignore))
+      (status/2 pred var cont))))
 
 ;;; Conflict Rule
 (defmacro :- (head &body body)
   `(progn
-     (<- ,head ,@body (sstatus ,(predicate head) ,@(args head)))
+     (<- ,head ,@body)
      (def-prolog-compiler-macro ,(first head)
 	 (goal body cont bindings)
        (if (in-apply? (predicate goal))
 	   :pass
-	   (progn
-	     `(lookup/2 ',(predicate goal)
-			,@(mapcar (lambda (g) (if (variable-p g) g (quote g))) (args goal))
-			(lambda () ,(compile-body body cont bindings))))))
+	   (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings)))
      ',(predicate head)))

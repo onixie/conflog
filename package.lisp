@@ -12,6 +12,7 @@
 			  #:compile-body
 			  #:def-prolog-compiler-macro
 			  #:deref
+			  #:ignore
 			  #:predicate
 			  #:unbound-var-p
 			  #:unify! 
