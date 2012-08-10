@@ -1,7 +1,13 @@
-(in-package :conflog)
 ;;; "conflog" goes here. Hacks and glory await!
+(in-package :conflog)
 
 ;;; Utils
+(defmacro define-alias (alias name &key (type :macro))
+  `(eval-when (:compile-toplevel)
+     ,(ecase type
+	     (:function `(setf (symbol-function ',alias) (symbol-function ',name)))
+	     (:macro `(setf (macro-function ',alias) (macro-function ',name))))))
+
 (eval-when (:compile-toplevel)
   (defconstant +N/A+ (gensym)))
 
@@ -10,15 +16,19 @@
 
 (defmacro define-primitive (name (&rest args) &body body)
   (let ((pname (intern (symbol-name name) :paiprolog)))
-    `(eval-when (:compile-toplevel :load-toplevel :execute)
-       (defun ,pname (,@args) ,@body)
-       (shadowing-import ',pname))))
+    `(progn
+       (defun ,pname (,@args) 
+	 #+conflog-debug
+	 (format t "~&(~A ~{~A~^ ~})~%" ',pname (butlast (list ,@args)))
+	 ,@body)
+       (eval-when (:compile-toplevel :execute)
+	 (shadowing-import ',pname)))))
 
 ;;; Primitives
 
 (defmacro define-status/primitive (name)
   (let ((v (gensym)))
-    `(eval-when (:compile-toplevel :load-toplevel :execute)
+    `(progn
        (defvar ,v (make-hash-table))
        (defmacro ,name (var)
 	 `(gethash ,var ,',v +N/A+))
@@ -46,13 +56,13 @@
 	     (not (unbound-var-p val)))
     (let* ((pred (deref pred))
 	   (pval (status pred)))
-      (when (found? pval)
-	(setf (prev-status pred) pval))
-      (setf (status pred) val)
+      (when (not (eq pval val))
+	(setf (status pred) val)
+	(when (found? pval)
+	  (setf (prev-status pred) pval)))
       (funcall cont))))
 
 (define-primitive dump-status/0 (cont)
-  (declare (ignorable cont))
   (dolist (key (status-variables))
     (format t "~&~A:" key)
     (let ((s (status key)))
@@ -64,11 +74,12 @@
     (let ((ds (init-status key)))
       (when (found? ds)
 	(format t ", default ~A" ds))))
-  (finish-output))
+  (finish-output)
+  (funcall cont))
 
 (macrolet ((define-apply-utils ()
 	     (let ((in (gensym "in-apply")))
-	       `(eval-when (:compile-toplevel :load-toplevel :execute)
+	       `(progn
 		  (defvar ,in (make-hash-table))
 		  (defun in-apply! (g) (setf (gethash g ,in) t))
 		  (defun in-apply? (g) (prog1 (gethash g ,in nil) (setf (gethash g ,in) nil)))))))
@@ -85,13 +96,35 @@
 	(apply/1 `(,(deref pred) ,(?)) #'ignore))
       (status/2 pred var cont))))
 
+(define-primitive member/2 (item list cont)
+  (when (some (lambda (v) (unify! item v)) list)
+    (funcall cont)))
+
 ;;; Conflict Rule
-(defmacro :- (head &body body)
-  `(progn
-     (<- ,head ,@body)
-     (def-prolog-compiler-macro ,(first head)
-	 (goal body cont bindings)
-       (if (in-apply? (predicate goal))
-	   :pass
-	   (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings)))
-     ',(predicate head)))
+(defvar total-rules 0)
+(defmacro define-rule (head &body body)
+  (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf total-rules) head body)))
+    (declare (ignorable rule-str))
+    `(progn
+       #+conflog-debug
+       (<- ,head (lisp (format t "~&~A~%" ,rule-str)) ,@body)
+       #-conflog-debug
+       (<- ,head ,@body)
+       ,(unless (get (first head) 'prolog-compiler-macro)
+		`(def-prolog-compiler-macro ,(first head)
+		     (goal body cont bindings)
+		   (if (in-apply? (predicate goal))
+		       :pass
+		       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
+       ',(predicate head))))
+
+(defun clear-rules ()
+  (dolist (pred *db-predicates*)
+    (mapc (lambda (clause)
+	    (fmakunbound (intern (symbol-name (make-predicate pred (relation-arity clause))) :paiprolog))
+	    (unintern (make-predicate pred (relation-arity clause)) :paiprolog))
+	  (get-clauses pred)))
+  (clear-db)
+  (setf *db-predicates* nil))
+
+(define-alias :- define-rule)

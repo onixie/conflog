@@ -16,5 +16,11 @@
 			  #:predicate
 			  #:unbound-var-p
 			  #:unify! 
-			  #:variable-p))
+			  #:variable-p
+			  #:prolog-compiler-macro
+			  #:clear-db
+			  #:*db-predicates*
+			  #:make-predicate
+			  #:relation-arity
+			  #:get-clauses))
 
