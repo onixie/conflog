@@ -22,5 +22,10 @@
 			  #:*db-predicates*
 			  #:make-predicate
 			  #:relation-arity
-			  #:get-clauses))
+			  #:get-clauses)
+  (:export #:|:-| #:?-
+	   #:clear-rules
+	   #:clear-status
+	   #:setup-status
+	   #:setup-init-status))
 

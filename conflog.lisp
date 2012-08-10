@@ -3,10 +3,9 @@
 
 ;;; Utils
 (defmacro define-alias (alias name &key (type :macro))
-  `(eval-when (:compile-toplevel)
-     ,(ecase type
-	     (:function `(setf (symbol-function ',alias) (symbol-function ',name)))
-	     (:macro `(setf (macro-function ',alias) (macro-function ',name))))))
+  (ecase type
+    (:function `(setf (symbol-function ',alias) (symbol-function ',name)))
+    (:macro `(setf (macro-function ',alias) (macro-function ',name)))))
 
 (eval-when (:compile-toplevel)
   (defconstant +N/A+ (gensym)))
@@ -21,7 +20,7 @@
 	 #+conflog-debug
 	 (format t "~&(~A ~{~A~^ ~})~%" ',pname (butlast (list ,@args)))
 	 ,@body)
-       (eval-when (:compile-toplevel :execute)
+       (eval-when (:compile-toplevel)
 	 (shadowing-import ',pname)))))
 
 ;;; Primitives
@@ -55,6 +54,7 @@
   (when (and (not (unbound-var-p pred))
 	     (not (unbound-var-p val)))
     (let* ((pred (deref pred))
+	   (val (deref val))
 	   (pval (status pred)))
       (when (not (eq pval val))
 	(setf (status pred) val)
