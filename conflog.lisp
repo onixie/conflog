@@ -138,3 +138,27 @@
   (setf *db-predicates* nil))
 
 (define-alias :- define-rule)
+
+;;; Query Rule
+(define-primitive return/2 (var-names vars cont)
+  (declare (cl:ignore cont))
+  (throw :ret
+    (if (null vars)
+	t
+	(mapcar (lambda (var-name var)
+		  (cons var-name (deref-exp var)))
+		var-names vars))))
+
+(defun query (goals)
+  "Prove the list of goals by compiling and calling it."
+  (clear-predicate 'top-level-query)
+  (let ((vars (delete '? (variables-in goals))))
+    (add-clause `((top-level-query)
+                  ,@goals
+                  (return ,(mapcar #'symbol-name vars)
+                                    ,vars))))
+  ;; Now run it
+  (catch :ret
+    (run-prolog 'top-level-query/0 #'ignore)))
+
+(defmacro ?- (&rest goals) `(query ',(replace-?-vars goals)))

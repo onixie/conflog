@@ -22,7 +22,13 @@
 			  #:*db-predicates*
 			  #:make-predicate
 			  #:relation-arity
-			  #:get-clauses)
+			  #:get-clauses
+			  #:clear-predicate
+			  #:run-prolog
+			  #:deref-exp
+			  #:replace-?-vars
+			  #:variables-in
+			  #:top-level-query/0)
   (:export #:|:-| #:?-
 	   #:clear-rules
 	   #:clear-status
