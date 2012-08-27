@@ -13,6 +13,7 @@
 (defmacro found? (val)
   `(not (eq ,val +N/A+)))
 
+;;; Primitives
 (defmacro define-primitive (name (&rest args) &body body)
   (let ((pname (intern (symbol-name name) :paiprolog)))
     `(progn
@@ -22,8 +23,6 @@
 	 ,@body)
        (eval-when (:compile-toplevel)
 	 (shadowing-import ',pname)))))
-
-;;; Primitives
 
 (defmacro define-status/primitive (name)
   (let ((v (gensym)))
@@ -95,9 +94,9 @@
   (let ((pred (predicate goal))
 	(var (first (args goal))))
     (with-apply (pred :in)
-      (call/1 goal (lambda ()
-		     (with-apply (pred :out)
-		       (sstatus/2 pred var cont)))))))
+		(call/1 goal (lambda ()
+			       (with-apply (pred :out)
+					   (sstatus/2 pred var cont)))))))
 
 (define-primitive lookup/2 (pred var cont)
   (when (not (unbound-var-p pred))
@@ -110,8 +109,11 @@
   (when (some (lambda (v) (unify! item v)) list)
     (funcall cont)))
 
+;;; Propogation
+
 ;;; Conflict Rule
 (defvar total-rules 0)
+(defvar relation (make-hash-table))
 (defmacro define-rule (head &body body)
   (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf total-rules) head body)))
     (declare (ignorable rule-str))
@@ -121,11 +123,11 @@
        #-conflog-debug
        (<- ,head ,@body)
        ,(unless (get (first head) 'prolog-compiler-macro)
-		`(def-prolog-compiler-macro ,(first head)
-		     (goal body cont bindings)
-		   (if (in-apply? (predicate goal))
-		       :pass
-		       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
+	  `(def-prolog-compiler-macro ,(first head)
+	     (goal body cont bindings)
+	     (if (in-apply? (predicate goal))
+		 :pass
+	       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
        ',(predicate head))))
 
 (defun clear-rules ()
@@ -141,13 +143,11 @@
 
 ;;; Query Rule
 (define-primitive return/2 (var-names vars cont)
-  (declare (cl:ignore cont))
   (throw :ret
-    (if (null vars)
-	t
-	(mapcar (lambda (var-name var)
-		  (cons var-name (deref-exp var)))
-		var-names vars))))
+	 (or (null vars)
+	     (mapcar (lambda (var-name var)
+		       (cons (intern var-name) (deref-exp var)))
+		     var-names vars))))
 
 (defun query (goals)
   "Prove the list of goals by compiling and calling it."
@@ -155,10 +155,25 @@
   (let ((vars (delete '? (variables-in goals))))
     (add-clause `((top-level-query)
                   ,@goals
-                  (return ,(mapcar #'symbol-name vars)
-                                    ,vars))))
+                  (return ,(mapcar #'symbol-name vars) ,vars))))
   ;; Now run it
   (catch :ret
     (run-prolog 'top-level-query/0 #'ignore)))
 
 (defmacro ?- (&rest goals) `(query ',(replace-?-vars goals)))
+
+;;; Low-level Interface
+(defmacro with-rules ((&rest rules) &rest queries)
+  (labels ((do-query (queries)
+		     (cond ((null queries) nil)
+			   (t `((progn (clear-status) ,(car queries))
+				,@(do-query (cdr queries)))))))
+    `(progn (clear-rules)
+	    ,@rules
+	    (list ,@(do-query queries)))))
+
+(defmacro with-status ((&rest cons) &body body)
+  `(unwind-protect
+       (progn (setup-status ',cons)
+	      ,@body)
+     (clear-status)))

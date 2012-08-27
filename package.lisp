@@ -33,5 +33,7 @@
 	   #:clear-rules
 	   #:clear-status
 	   #:setup-status
-	   #:setup-init-status))
+	   #:setup-init-status
+	   #:with-rules
+	   #:with-status))
 
