@@ -49,7 +49,7 @@
 (define-status/primitive init-status)
 (define-status/primitive prev-status)
 
-(define-primitive sstatus/2 (pred val cont)
+(defun set-status (pred val cont &optional (schedule-propogate nil))
   (when (and (not (unbound-var-p pred))
 	     (not (unbound-var-p val)))
     (let* ((pred (deref pred))
@@ -58,8 +58,16 @@
       (when (not (eq pval val))
 	(setf (status pred) val)
 	(when (found? pval)
-	  (setf (prev-status pred) pval)))
+	  (setf (prev-status pred) pval)
+	  (when schedule-propogate
+	    (funcall schedule-propogate pred))))
       (funcall cont))))
+
+(define-primitive sstatus/2 (pred val cont)
+  (set-status pred val cont))
+
+(define-primitive propogate-sstatus/2 (pred val cont)
+  (set-status pred val cont #'schedule-propogate))
 
 (define-primitive dump-status/0 (cont)
   (dolist (key (status-variables))
@@ -94,9 +102,9 @@
   (let ((pred (predicate goal))
 	(var (first (args goal))))
     (with-apply (pred :in)
-		(call/1 goal (lambda ()
-			       (with-apply (pred :out)
-					   (sstatus/2 pred var cont)))))))
+      (call/1 goal (lambda ()
+		     (with-apply (pred :out)
+		       (propogate-sstatus/2 pred var cont)))))))
 
 (define-primitive lookup/2 (pred var cont)
   (when (not (unbound-var-p pred))
@@ -109,25 +117,32 @@
   (when (some (lambda (v) (unify! item v)) list)
     (funcall cont)))
 
-;;; Propogation
-
 ;;; Conflict Rule
-(defvar total-rules 0)
-(defvar relation (make-hash-table))
+(defvar *total-rules* 0)
+(defvar *relation* (make-hash-table))
 (defmacro define-rule (head &body body)
-  (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf total-rules) head body)))
+  (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf *total-rules*) head body)))
     (declare (ignorable rule-str))
     `(progn
        #+conflog-debug
        (<- ,head (lisp (format t "~&~A~%" ,rule-str)) ,@body)
        #-conflog-debug
        (<- ,head ,@body)
+
+       (mapc (lambda (rhs)
+	       (let ((old (gethash rhs *relation* nil)))
+		 (unless (member ',(car head) old)
+		   (setf (gethash rhs *relation*)
+			 (append old (list ',(predicate head)))))))
+	     ',(mapcar #'predicate body))
+
        ,(unless (get (first head) 'prolog-compiler-macro)
 	  `(def-prolog-compiler-macro ,(first head)
 	     (goal body cont bindings)
 	     (if (in-apply? (predicate goal))
 		 :pass
 	       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
+
        ',(predicate head))))
 
 (defun clear-rules ()
@@ -137,7 +152,9 @@
 	    (unintern (make-predicate pred (relation-arity clause)) :paiprolog))
 	  (get-clauses pred)))
   (clear-db)
-  (setf *db-predicates* nil))
+  (setf *db-predicates* nil)
+  (setf *total-rules* 0)
+  (setf *relation* (make-hash-table)))
 
 (define-alias :- define-rule)
 
@@ -150,17 +167,55 @@
 		     var-names vars))))
 
 (defun query (goals)
-  "Prove the list of goals by compiling and calling it."
   (clear-predicate 'top-level-query)
   (let ((vars (delete '? (variables-in goals))))
     (add-clause `((top-level-query)
                   ,@goals
                   (return ,(mapcar #'symbol-name vars) ,vars))))
-  ;; Now run it
   (catch :ret
     (run-prolog 'top-level-query/0 #'ignore)))
 
-(defmacro ?- (&rest goals) `(query ',(replace-?-vars goals)))
+(defmacro ?- (&rest goals)
+  `(prog1
+       (query ',(replace-?-vars goals))
+     (run-propogate)))
+
+;;; Propogation
+(defvar *propogating* nil)
+(defvar *in-propogate* nil)
+
+(defun propogate-ask (&optional (preds nil))
+  (macrolet ((ask (pred)
+	       `(let ((pred ,pred))
+		  #+conflog-debug
+		  (format t "~&  --> ~A ~%" pred)
+		  (query ,(replace-?-vars ``((apply (,pred ?))))))))
+    (when preds
+      (let ((*in-propogate* (first preds)))
+	(ask (first preds)))
+      (propogate-ask (rest preds)))))
+
+(defun schedule-propogate (pred)
+  #+conflog-debug
+  (format t "~&SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]~%" pred (gethash pred *relation*))
+  (setf *propogating* 
+	(append *propogating* 
+		(list (lambda ()
+			#+conflog-debug
+			(format t "~&PROPOGATING ~A:~%" pred)
+			(propogate-ask (gethash pred *relation*)))))))
+
+(defun run-propogate ()
+  (loop for p in *propogating* do (funcall p))
+  (setf *propogating* nil))
+
+(define-primitive propogate/1 (pred cont)
+  (schedule-propogate pred)
+  (funcall cont))
+
+(define-primitive ^/1 (pred cont)
+  (when (eq pred *in-propogate*)
+    (funcall cont)))
 
 ;;; Low-level Interface
 (defmacro with-rules ((&rest rules) &rest queries)
