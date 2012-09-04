@@ -66,7 +66,7 @@
 (define-primitive sstatus/2 (pred val cont)
   (set-status pred val cont))
 
-(define-primitive propogate-sstatus/2 (pred val cont)
+(define-primitive maybe-propogate-sstatus/2 (pred val cont)
   (set-status pred val cont #'schedule-propogate))
 
 (define-primitive dump-status/0 (cont)
@@ -102,16 +102,16 @@
   (let ((pred (predicate goal))
 	(var (first (args goal))))
     (with-apply (pred :in)
-      (call/1 goal (lambda ()
-		     (with-apply (pred :out)
-		       (propogate-sstatus/2 pred var cont)))))))
+		(call/1 goal (lambda ()
+			       (with-apply (pred :out)
+					   (maybe-propogate-sstatus/2 pred var cont)))))))
 
 (define-primitive lookup/2 (pred var cont)
   (when (not (unbound-var-p pred))
     (let ((s (status (deref pred))))
-      (unless (found? s)
-	(apply/1 `(,(deref pred) ,(?)) #'ignore))
-      (status/2 pred var cont))))
+      (if (found? s)
+	  (status/2 pred var cont)
+	(apply/1 `(,(deref pred) ,(?)) (lambda () (status/2 pred var cont)))))))
 
 (define-primitive member/2 (item list cont)
   (when (some (lambda (v) (unify! item v)) list)
@@ -120,6 +120,17 @@
 ;;; Conflict Rule
 (defvar *total-rules* 0)
 (defvar *relation* (make-hash-table))
+(defun add-relation (head body)
+  (cond ((null body) nil)
+	(t (let ((pred (predicate (first body))))
+	     (case pred
+	       ((or and not) (add-relation head (args (first body))))
+	       (t (let ((old (gethash pred *relation* nil)))
+		    (unless (member (predicate head) old)
+		      (setf (gethash pred *relation*)
+			    (append old (list (predicate head)))))))))
+	   (add-relation head (rest body)))))
+
 (defmacro define-rule (head &body body)
   (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf *total-rules*) head body)))
     (declare (ignorable rule-str))
@@ -129,12 +140,7 @@
        #-conflog-debug
        (<- ,head ,@body)
 
-       (mapc (lambda (rhs)
-	       (let ((old (gethash rhs *relation* nil)))
-		 (unless (member ',(car head) old)
-		   (setf (gethash rhs *relation*)
-			 (append old (list ',(predicate head)))))))
-	     ',(mapcar #'predicate body))
+       (add-relation ',head ',body)
 
        ,(unless (get (first head) 'prolog-compiler-macro)
 	  `(def-prolog-compiler-macro ,(first head)
@@ -186,35 +192,40 @@
 
 (defun propogate-ask (&optional (preds nil))
   (macrolet ((ask (pred)
-	       `(let ((pred ,pred))
-		  #+conflog-debug
-		  (format t "~&  --> ~A ~%" pred)
-		  (query ,(replace-?-vars ``((apply (,pred ?))))))))
+		  `(let ((pred ,pred))
+		     #+conflog-debug
+		     (format t "~&  --> ~A ~%" pred)
+		     (query ,(replace-?-vars ``((apply (,pred ?))))))))
     (when preds
-      (let ((*in-propogate* (first preds)))
-	(ask (first preds)))
+      (ask (first preds))
       (propogate-ask (rest preds)))))
 
 (defun schedule-propogate (pred)
-  #+conflog-debug
-  (format t "~&SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]~%" pred (gethash pred *relation*))
-  (setf *propogating* 
-	(append *propogating* 
-		(list (lambda ()
-			#+conflog-debug
-			(format t "~&PROPOGATING ~A:~%" pred)
-			(propogate-ask (gethash pred *relation*)))))))
+  (let ((preds (gethash pred *relation* nil)))
+    (when preds
+      #+conflog-debug
+      (format t "~&SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]~%" pred preds)
+      (setf *propogating* 
+	    (append *propogating* 
+		    (list (lambda ()
+			    #+conflog-debug
+			    (format t "~&PROPOGATING ~A TO:~%" pred)
+			    (let ((*in-propogate* pred))
+			      (propogate-ask preds)))))))))
 
 (defun run-propogate ()
-  (loop for p in *propogating* do (funcall p))
-  (setf *propogating* nil))
+  (labels ((the-loop ()
+		     (when *propogating*
+		       (funcall (pop *propogating*))
+		       (the-loop))))
+    (the-loop)))
 
 (define-primitive propogate/1 (pred cont)
   (schedule-propogate pred)
   (funcall cont))
 
 (define-primitive ^/1 (pred cont)
-  (when (eq pred *in-propogate*)
+  (when (eq (deref pred) *in-propogate*)
     (funcall cont)))
 
 ;;; Low-level Interface

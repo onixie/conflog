@@ -9,11 +9,13 @@
   (let ((index 0))
     (declare (ignorable index))
     `(deftest ,name
-	 (with-rules (,@rules) ,@(mapcar (lambda (assert)
-					   `(progn
-					      #+conflog-debug
-					      (format t "~&Test ~A.~D~&----------~&Rules:~{~&  ~S~}~&Ask:~&  ~A~&Expected:~&  ~A~&Log:~%" ',name ,(incf index) ',rules ',(first assert) ',(second assert))
-					      ,(first assert))) asserts))
+	 (with-rules (,@rules)
+	   ,@(mapcar (lambda (assert)
+		       `(progn
+			  #+conflog-debug
+			  (format t "~&Test ~A.~D~&----------~&Rules:~{~&  ~S~}~&Ask:~&  ~A~&Expected:~&  ~A~&Log:~%"
+				  ',name ,(incf index) ',rules ',(first assert) ',(second assert))
+			  ,(first assert))) asserts))
        ,(mapcar #'second asserts))))
 
 ;;; Tests
@@ -94,7 +96,6 @@
 	  (?- (A ?what)))
    ((?what . on))))
 
-
 (define-conflog-test T11 ((:- (A on) (B off))
 			  (:- (A off) (B on))
 			  (:- (C on) (A on))
@@ -102,10 +103,40 @@
 			  (:- (C off) true))
   ((with-status ((B . on) (A . off))
      (?- (propogate-sstatus B off))
-     (?- (apply (C ?what))))
+     (?- (C ?what)))
    ((?what . on)))
   ((with-status ((B . on))
      (?- (propogate-sstatus B off)
 	 (propogate-sstatus B on))
      (?- (apply (C ?what))))
    ((?what . off))))
+
+(define-conflog-test T12 ((:- (A on) (B off) (C on))
+			  (:- (A off) true)
+			  (:- (D on) (or (and (A on) (C ?what) (member ?what (off)))
+					 (and (A off) (C off) (B off))))
+			  (:- (D ?what) (B ?what))
+			  (:- (B ?what) (status B ?what))
+			  (:- (C ?what) (status C ?what)))
+  ((with-status ((B . on) (C . on))
+     (append (?- (A ?whatA) (D ?whatD) (propogate-sstatus B off))
+	     (?- (A ?whatA2) (D ?whatD2))))
+   ((?whatA . off) (?whatD . on) (?whatA2 . on) (?whatD2 . off)))
+  ((with-status ((B . off) (C . off))
+     (append (?- (A ?whatA) (D ?whatD) (propogate-sstatus C on))
+	     (?- (A ?whatA2) (D ?whatD2))))
+   ((?whatA . off) (?whatD . on) (?whatA2 . on) (?whatD2 . off))))
+
+(define-conflog-test T13 ((:- (A 1) (^ B) (B off))
+			  (:- (A 2) (B off))
+			  (:- (A 3) true)
+			  (:- (B ?what) (C ?what))
+			  (:- (C ?what) (status C ?what)))
+  ((with-status ((C . on) (B . on))
+     (append (?- (A ?whatA) (propogate-sstatus C off))
+	     (?- (A ?whatA2))))
+   ((?whatA . 3) (?whatA2 . 1)))
+  ((with-status ((B . off))
+     (append (?- (A ?whatA) (sstatus B off) (propogate B))
+	     (?- (A ?whatA2))))
+   ((?whatA . 2) (?whatA2 . 1))))
