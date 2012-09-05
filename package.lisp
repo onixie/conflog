@@ -34,6 +34,15 @@
 	   #:clear-status
 	   #:setup-status
 	   #:setup-init-status
+
 	   #:with-rules
-	   #:with-status))
+	   #:with-status
+
+	   #:get-status
+	   #:refresh-status
+	   #:refresh-status/resolve
+	   #:set-status
+	   #:set-status/resolve
+	   #:resolve
+	   #:regist))
 

@@ -140,3 +140,32 @@
      (append (?- (A ?whatA) (sstatus B off) (propogate B))
 	     (?- (A ?whatA2))))
    ((?whatA . 2) (?whatA2 . 1))))
+
+(define-conflog-test T14 ((:- ($TMP_MixedAvailPaperSize (A4 A5 A3 LETTER LEDGER P11X17 TABLOID LEGAL B4 B5)) true)
+			  (:- ($FNS_MixedPaperPrint GRAY) (Layout$PageSize ?PAPER) ($TMP_MixedAvailPaperSize ?LIST) (not (member ?PAPER ?LIST)) (sstatus $VAL_MixedPaperPrint OFF))
+			  (:- (Layout$PageSize ?what) (status Layout$PageSize ?what))
+			  (:- ($VAL_MixedPaperPrint ?what) (status $VAL_MixedPaperPrint ?what)))
+  
+  ((with-status (($VAL_MixedPaperPrint . ON) ($FNS_MixedPaperPrint . ON) (Layout$PageSize . A0))
+     (list
+      (get-status '$FNS_MixedPaperPrint)
+      (get-status '$VAL_MixedPaperPrint)
+      (refresh-status/resolve '$FNS_MixedPaperPrint)
+      (get-status '$VAL_MixedPaperPrint)))
+   (ON ON GRAY OFF))
+  ((with-status (($VAL_MixedPaperPrint . ON) ($FNS_MixedPaperPrint . ON) (Layout$PageSize . A0))
+     (list
+      (get-status '$FNS_MixedPaperPrint)
+      (get-status '$VAL_MixedPaperPrint)
+      (progn (resolve 'Layout$PageSize)
+	     (get-status '$FNS_MixedPaperPrint))
+      (get-status '$VAL_MixedPaperPrint)))
+   (ON ON GRAY OFF))
+  ((with-status (($VAL_MixedPaperPrint . ON) ($FNS_MixedPaperPrint . ON) (Layout$PageSize . A3))
+     (list
+      (get-status '$FNS_MixedPaperPrint)
+      (get-status '$VAL_MixedPaperPrint)
+      (progn (set-status/resolve 'Layout$PageSize 'A0)
+	     (get-status '$FNS_MixedPaperPrint))
+      (get-status '$VAL_MixedPaperPrint)))
+   (ON ON GRAY OFF)))

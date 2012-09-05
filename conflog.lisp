@@ -65,7 +65,17 @@
 (define-status/primitive init-status)
 (define-status/primitive prev-status)
 
-(defun set-status (pred val cont &optional (schedule-propogate nil))
+(defvar *status-hook* (make-hash-table))
+(defmacro add-hook (pred hook)
+  `(setf (gethash ,pred *status-hook*) ,hook))
+(defmacro remove-hook (pred)
+  `(setf (gethash ,pred *status-hook*) +N/A+))
+(defmacro call-hook (pred prev-status status)
+  `(let ((hook (gethash ,pred *status-hook* +N/A+)))
+     (when (found? hook)
+       (funcall hook ,pred ,prev-status ,status))))
+
+(defun sstatus (pred val cont &optional (schedule-propogate nil))
   (when (and (not (unbound-var-p pred))
 	     (not (unbound-var-p val)))
     (let* ((pred (deref pred))
@@ -76,14 +86,15 @@
 	(when (found? pval)
 	  (setf (prev-status pred) pval)
 	  (when schedule-propogate
-	    (funcall schedule-propogate pred))))
+	    (funcall schedule-propogate pred)))
+	(call-hook pred (found? pval) val))
       (funcall cont))))
 
 (define-primitive sstatus/2 (pred val cont)
-  (set-status pred val cont))
+  (sstatus pred val cont))
 
 (define-primitive maybe-propogate-sstatus/2 (pred val cont)
-  (set-status pred val cont #'schedule-propogate))
+  (sstatus pred val cont #'schedule-propogate))
 
 (define-primitive dump-status/0 (cont)
   (dolist (key (status-variables))
@@ -118,19 +129,23 @@
   (let ((pred (predicate goal))
 	(var (first (args goal))))
     (with-apply (pred :in)
-		(call/1 goal (lambda ()
-			       (with-apply (pred :out)
-					   (maybe-propogate-sstatus/2 pred var cont)))))))
+      (call/1 goal (lambda ()
+		     (with-apply (pred :out)
+		       (maybe-propogate-sstatus/2 pred var cont)))))))
 
 (define-primitive lookup/2 (pred var cont)
   (when (not (unbound-var-p pred))
     (let ((s (status (deref pred))))
       (if (found? s)
 	  (status/2 pred var cont)
-	(apply/1 `(,(deref pred) ,(?)) (lambda () (status/2 pred var cont)))))))
+	  (apply/1 `(,(deref pred) ,(?)) (lambda () (status/2 pred var cont)))))))
 
 (define-primitive member/2 (item list cont)
-  (when (some (lambda (v) (unify! item v)) list)
+  (when (some (lambda (v) (unify! item v)) (deref list))
+    (funcall cont)))
+
+(define-primitive not/1 (goal cont)
+  (unless (call/1 goal (lambda () t))
     (funcall cont)))
 
 ;;; Conflict Rule
@@ -147,23 +162,22 @@
 			    (append old (list (predicate head)))))))))
 	   (add-relation head (rest body)))))
 
-(defmacro define-rule (head &body body)
+(defmacro conflict-rule (head &body body)
   (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf *total-rules*) head body)))
     (declare (ignorable rule-str))
     `(progn
-       #+conflog-debug
-       (<- ,head (lisp (indent-format-line "~A" ,rule-str)) ,@body)
-       #-conflog-debug
-       (<- ,head ,@body)
+       (<- ,head
+	   #+conflog-debug (lisp (indent-format-line "~A" ,rule-str))
+	   ,@body)
 
        (add-relation ',head ',body)
 
        ,(unless (get (first head) 'prolog-compiler-macro)
-	  `(def-prolog-compiler-macro ,(first head)
-	     (goal body cont bindings)
-	     (if (in-apply? (predicate goal))
-		 :pass
-	       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
+		`(def-prolog-compiler-macro ,(first head)
+		     (goal body cont bindings)
+		   (if (in-apply? (predicate goal))
+		       :pass
+		       (compile-body (cons `(lookup ,(predicate goal) ,@(args goal)) body) cont bindings))))
 
        ',(predicate head))))
 
@@ -178,43 +192,47 @@
   (setf *total-rules* 0)
   (setf *relation* (make-hash-table)))
 
-(define-alias :- define-rule)
+(define-alias :- conflict-rule)
 
 ;;; Query Rule
 (define-primitive return/2 (var-names vars cont)
   (throw :ret
-	 (or (null vars)
-	     (mapcar (lambda (var-name var)
-		       (cons (intern var-name) (deref-exp var)))
-		     var-names vars))))
+    (or (null vars)
+	(mapcar (lambda (var-name var)
+		  (cons (intern var-name) (deref-exp var)))
+		var-names vars))))
 
 (defun query (goals)
   (clear-predicate 'top-level-query)
-  (let ((vars (delete '? (variables-in goals))))
+  (let* ((goals (replace-?-vars goals))
+	 (vars (delete '? (variables-in goals))))
     (add-clause `((top-level-query)
                   ,@goals
                   (return ,(mapcar #'symbol-name vars) ,vars))))
   (catch :ret
     (run-prolog 'top-level-query/0 #'ignore)))
 
-(defmacro ?- (&rest goals)
-  `(prog1
-       (query ',(replace-?-vars goals))
-     (run-propogate)))
+(defun query/run-propogate (goals)
+  (prog1 (query goals)
+    (run-propogate)))
+
+(defmacro query-rule (&rest goals)
+  `(query/run-propogate ',goals))
+
+(define-alias ?- query-rule)
 
 ;;; Propogation
 (defvar *propogating* nil)
 (defvar *in-propogate* nil)
 
-(defun propogate-ask (&optional (preds nil))
-  (macrolet ((ask (pred)
-		  `(let ((pred ,pred))
-		     #+conflog-debug
-		     (format t "~&--> ~A ~%" pred)
-		     (query ,(replace-?-vars ``((apply (,pred ?))))))))
+(defun propogate-refresh (&optional (preds nil))
+  (flet ((refresh (pred)
+	   #+conflog-debug
+	   (format t "~&--> ~A ~%" pred)
+	   (query `((apply (,pred ?))))))
     (when preds
-      (ask (first preds))
-      (propogate-ask (rest preds)))))
+      (refresh (first preds))
+      (propogate-refresh (rest preds)))))
 
 (defun schedule-propogate (pred)
   (let ((preds (gethash pred *relation* nil)))
@@ -227,14 +245,17 @@
 			    #+conflog-debug
 			    (format t "~&PROPOGATING ~A TO:~%" pred)
 			    (let ((*in-propogate* pred))
-			      (propogate-ask preds)))))))))
+			      (propogate-refresh preds)))))))))
 
 (defun run-propogate ()
   (labels ((the-loop ()
-		     (when *propogating*
-		       (funcall (pop *propogating*))
-		       (the-loop))))
+	     (when *propogating*
+	       (funcall (pop *propogating*))
+	       (the-loop))))
     (the-loop)))
+
+(defun clear-propogate ()
+  (setf *propogating* nil))
 
 (define-primitive propogate/1 (pred cont)
   (schedule-propogate pred)
@@ -247,15 +268,45 @@
 ;;; Low-level Interface
 (defmacro with-rules ((&rest rules) &rest queries)
   (labels ((do-query (queries)
-		     (cond ((null queries) nil)
-			   (t `((progn (clear-status) ,(car queries))
-				,@(do-query (cdr queries)))))))
+	     (cond ((null queries) nil)
+		   (t `((progn (clear-status) ,(car queries))
+			,@(do-query (cdr queries)))))))
     `(progn (clear-rules)
 	    ,@rules
 	    (list ,@(do-query queries)))))
 
 (defmacro with-status ((&rest cons) &body body)
   `(unwind-protect
-       (progn (setup-status ',cons)
-	      ,@body)
+	(progn (setup-status ',cons)
+	       ,@body)
      (clear-status)))
+
+;;; High-level Interface
+(declaim (inline get-status refresh-status refresh-status/resolve set-status set-status/resolve resolve regist))
+
+(defun get-status (pred)
+  (let ((res (first (query `((,pred ?what))))))
+    (if (consp res)
+	(cdr res)
+	res)))
+
+(defun refresh-status (pred)
+  (query `((apply (,pred ?))))
+  (clear-propogate)
+  (get-status pred))
+
+(defun refresh-status/resolve (pred)
+  (query/run-propogate `((apply (,pred ?))))
+  (get-status pred))
+
+(defun set-status (pred status)
+  (query `((sstatus ,pred ,status))))
+
+(defun set-status/resolve (pred status)
+  (query/run-propogate `((maybe-propogate-sstatus ,pred ,status))))
+
+(defun resolve (pred)
+  (query/run-propogate `((propogate ,pred))))
+
+(defun regist (pred hook)
+  (add-hook pred hook))
