@@ -13,14 +13,30 @@
 (defmacro found? (val)
   `(not (eq ,val +N/A+)))
 
+(eval-when (:compile-toplevel)
+  (defconstant +indent-amount+ 4))
+(defvar *indent-level* 0)
+(defmacro indent-format-line (&rest args)
+  `(progn
+     (format t "~&")
+     (loop for i from *indent-level* above 0 do (princ #\Space))
+     (format t ,@args)
+     (terpri)))
+
+(defmacro with-indent (() &body body)
+  `(let ((*indent-level* (+ *indent-level* +indent-amount+)))
+     ,@body))
+
 ;;; Primitives
 (defmacro define-primitive (name (&rest args) &body body)
   (let ((pname (intern (symbol-name name) :paiprolog)))
     `(progn
-       (defun ,pname (,@args) 
+       (defun ,pname (,@args)
 	 #+conflog-debug
-	 (format t "~&(~A ~{~A~^ ~})~%" ',pname (butlast (list ,@args)))
-	 ,@body)
+	 (indent-format-line "CALL (~A ~{~A~^ ~})" ',pname (butlast (list ,@args)))
+	 (unwind-protect (with-indent () ,@body)
+	   #+conflog-debug
+	   (indent-format-line "RETURN (~A ~{~A~^ ~})" ',pname (butlast (list ,@args)))))
        (eval-when (:compile-toplevel)
 	 (shadowing-import ',pname)))))
 
@@ -136,7 +152,7 @@
     (declare (ignorable rule-str))
     `(progn
        #+conflog-debug
-       (<- ,head (lisp (format t "~&~A~%" ,rule-str)) ,@body)
+       (<- ,head (lisp (indent-format-line "~A" ,rule-str)) ,@body)
        #-conflog-debug
        (<- ,head ,@body)
 
@@ -194,7 +210,7 @@
   (macrolet ((ask (pred)
 		  `(let ((pred ,pred))
 		     #+conflog-debug
-		     (format t "~&  --> ~A ~%" pred)
+		     (format t "~&--> ~A ~%" pred)
 		     (query ,(replace-?-vars ``((apply (,pred ?))))))))
     (when preds
       (ask (first preds))
@@ -204,7 +220,7 @@
   (let ((preds (gethash pred *relation* nil)))
     (when preds
       #+conflog-debug
-      (format t "~&SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]~%" pred preds)
+      (indent-format-line "SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]" pred preds)
       (setf *propogating* 
 	    (append *propogating* 
 		    (list (lambda ()
