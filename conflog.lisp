@@ -27,16 +27,26 @@
   `(let ((*indent-level* (+ *indent-level* +indent-amount+)))
      ,@body))
 
+(defun unify! (x y)
+  "Destructively unify two expressions"
+  (cond ((equal (deref x) (deref y)) t)	;modified version
+        ((var-p x) (set-binding! x y))
+        ((var-p y) (set-binding! y x))
+        ((and (consp x) (consp y))
+         (and (unify! (first x) (first y))
+              (unify! (rest x) (rest y))))
+        (t nil)))
+
 ;;; Primitives
 (defmacro define-primitive (name (&rest args) &body body)
   (let ((pname (intern (symbol-name name) :paiprolog)))
     `(progn
        (defun ,pname (,@args)
 	 #+conflog-debug
-	 (indent-format-line "CALL (~A ~{~A~^ ~})" ',pname (butlast (list ,@args)))
+	 (indent-format-line "CALL (~A ~{~S~^ ~})" ',pname (butlast (list ,@args)))
 	 (unwind-protect (with-indent () ,@body)
 	   #+conflog-debug
-	   (indent-format-line "RETURN (~A ~{~A~^ ~})" ',pname (butlast (list ,@args)))))
+	   (indent-format-line "RETURN (~A ~{~S~^ ~})" ',pname (butlast (list ,@args)))))
        (eval-when (:compile-toplevel)
 	 (shadowing-import ',pname)))))
 
@@ -98,16 +108,16 @@
 
 (define-primitive dump-status/0 (cont)
   (dolist (key (status-variables))
-    (format t "~&~A:" key)
+    (format t "~&~S:" key)
     (let ((s (status key)))
       (when (found? (status key))
-	(format t " current ~A" s)))
+	(format t " current ~S" s)))
     (let ((ps (prev-status key)))
       (when (found? ps)
-	(format t ", previous ~A" ps)))
+	(format t ", previous ~S" ps)))
     (let ((ds (init-status key)))
       (when (found? ds)
-	(format t ", default ~A" ds))))
+	(format t ", default ~S" ds))))
   (finish-output)
   (funcall cont))
 
@@ -144,13 +154,20 @@
   (when (some (lambda (v) (unify! item v)) (deref list))
     (funcall cont)))
 
-(define-primitive not/1 (goal cont)
-  (unless (call/1 goal (lambda () t))
-    (funcall cont)))
+(def-prolog-compiler-macro not
+    (goal body cont bindings)
+  (compile-body (cons `(if ,@(args goal) fail true) body) cont bindings))
 
 ;;; Conflict Rule
 (defvar *total-rules* 0)
 (defvar *relation* (make-hash-table))
+(defvar *head-pred* nil)
+
+(defun add-head-pred (head)
+  (pushnew (predicate head) *head-pred* :test #'equal))
+(defun head-pred-p (pred)
+  (find pred *head-pred*))
+
 (defun add-relation (head body)
   (cond ((null body) nil)
 	(t (let ((pred (predicate (first body))))
@@ -163,7 +180,7 @@
 	   (add-relation head (rest body)))))
 
 (defmacro conflict-rule (head &body body)
-  (let ((rule-str (format nil "[~d] (:- ~A ~{~A~^ ~})" (incf *total-rules*) head body)))
+  (let ((rule-str (format nil "[~d] (:- ~S ~{~S~^ ~})" (incf *total-rules*) head body)))
     (declare (ignorable rule-str))
     `(progn
        (<- ,head
@@ -171,6 +188,7 @@
 	   ,@body)
 
        (add-relation ',head ',body)
+       (add-head-pred ',head)
 
        ,(unless (get (first head) 'prolog-compiler-macro)
 		`(def-prolog-compiler-macro ,(first head)
@@ -190,7 +208,8 @@
   (clear-db)
   (setf *db-predicates* nil)
   (setf *total-rules* 0)
-  (setf *relation* (make-hash-table)))
+  (setf *relation* (make-hash-table))
+  (setf *head-pred* nil))
 
 (define-alias :- conflict-rule)
 
@@ -228,7 +247,7 @@
 (defun propogate-refresh (&optional (preds nil))
   (flet ((refresh (pred)
 	   #+conflog-debug
-	   (format t "~&--> ~A ~%" pred)
+	   (format t "~&--> ~S ~%" pred)
 	   (query `((apply (,pred ?))))))
     (when preds
       (refresh (first preds))
@@ -238,12 +257,12 @@
   (let ((preds (gethash pred *relation* nil)))
     (when preds
       #+conflog-debug
-      (indent-format-line "SCHEDULE PROPOGATION OF ~A FOR [ ~{~A~^, ~} ]" pred preds)
+      (indent-format-line "SCHEDULE PROPOGATION OF ~S FOR [ ~{~S~^, ~} ]" pred preds)
       (setf *propogating* 
 	    (append *propogating* 
 		    (list (lambda ()
 			    #+conflog-debug
-			    (format t "~&PROPOGATING ~A TO:~%" pred)
+			    (format t "~&PROPOGATING ~S TO:~%" pred)
 			    (let ((*in-propogate* pred))
 			      (propogate-refresh preds)))))))))
 
@@ -263,6 +282,20 @@
 
 (define-primitive ^/1 (pred cont)
   (when (eq (deref pred) *in-propogate*)
+    (funcall cont)))
+
+;;; Misc conflog primitives
+
+;;; Two awkward solution:
+;;; 1. To define not/1 as normal prolog pred, I have to re-add it in once the rules db is cleared.
+;;; 2. To define not/1 as conflog primitives, I have to keep and check the conflog-rule heads.
+;;; 
+;;; not(goal) :- call(goal), !, fail. 
+;;; not(goal).
+(define-primitive not/1 (goal cont)
+  (unless (if (head-pred-p (predicate goal)) ;Not an elegant way, but a quick workaround :(
+	      (lookup/2 (predicate goal) (first (args goal)) (lambda () t))
+	      (call/1 goal (lambda () t)))
     (funcall cont)))
 
 ;;; Low-level Interface
@@ -299,6 +332,9 @@
   (query/run-propogate `((apply (,pred ?))))
   (get-status pred))
 
+(defun set-init-status (pred status)
+  (setf (init-status pred) status))
+
 (defun set-status (pred status)
   (query `((sstatus ,pred ,status))))
 
@@ -310,3 +346,4 @@
 
 (defun regist (pred hook)
   (add-hook pred hook))
+

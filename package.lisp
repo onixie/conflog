@@ -28,7 +28,9 @@
 			  #:deref-exp
 			  #:replace-?-vars
 			  #:variables-in
-			  #:top-level-query/0)
+			  #:top-level-query/0
+			  #:set-binding!
+			  #:var-p)
   (:export #:|:-| #:?-
 	   #:clear-rules
 	   #:clear-status
@@ -41,6 +43,7 @@
 	   #:get-status
 	   #:refresh-status
 	   #:refresh-status/resolve
+	   #:set-init-status
 	   #:set-status
 	   #:set-status/resolve
 	   #:resolve
