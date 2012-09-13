@@ -19,13 +19,9 @@
       ((on) t)
       ((off) nil)))
 
-  (defun default-callback (g v)
-    (declare (ignore g v))
-    nil)
-
-  (defun exit-frame (&rest rest)
-    (declare (ignore rest))
-    (frame-exit *application-frame*)))
+  (defun default-callback (&rest args)
+    (declare (ignore args))
+    nil))
 
 
 ;;; Conflog register
@@ -45,10 +41,14 @@
 	       ,@body))
      ,gadget))
 
+(defun conflog-regist-no-status (gadget)
+  (conflog-regist gadget (gensym)))
+
 (defun set-on/off (gadget status)
-  (case status
-    ((disable) (deactivate-gadget gadget))
-    ((enable) (activate-gadget gadget))))
+  (setf (gadget-value gadget)
+	(case status
+	  ((on) t)
+	  ((off) nil))))
 
 (defun conflog-regist-on/off-status (gadget init-status)
   (set-on/off gadget init-status)
@@ -58,8 +58,9 @@
 (defun set-selections (gadget status)
   (when status
     (if (atom status)
-	(when (gethash status *id/gadget* nil)
-	  (setf (gadget-value gadget) (gethash status *id/gadget*)))
+	(let ((g (gethash status *id/gadget* nil)))
+	  (when g
+	    (setf (gadget-value gadget) g)))
 	(setf (gadget-value gadget) (remove-if #'null (mapcar (lambda (id) (gethash id *id/gadget* nil)) status))))))
 
 (defun conflog-regist-selection-status (gadget init-status)
@@ -68,44 +69,43 @@
     (set-selections gadget status)))
 
 (defun set-range (gadget status)
-  (if (numberp status)
-      (setf (gadget-value gadget) status)
-      (set-on/off gadget status)))
+  (when (numberp status)
+    (setf (gadget-value gadget) status)))
 
 (defun conflog-regist-range-status (gadget init-status)
   (set-range gadget init-status)
   (conflog-regist gadget init-status
     (set-range gadget status)))
 
-(defun set-editable (gadget status)
-  (if (stringp status)
-      (setf (gadget-value gadget) status)
-      (set-on/off gadget status)))
+(defun set-string (gadget status)
+  (when (stringp status)
+    (setf (gadget-value gadget) status)))
 
 (defun conflog-regist-text-status (gadget init-status)
-  (set-editable gadget init-status)
+  (set-string gadget init-status)
   (conflog-regist gadget init-status
-    (set-editable gadget status)))
+    (set-string gadget status)))
 
 (defun conflog-refresh-all ()
   (loop for id being each hash-key in *id/gadget* using (hash-value gadget)
      do (progn (refresh-status/resolve id))))
 
 (defmacro conflog-compensate-rules ()
-  `(progn ,@(append (loop for pred in (reverse conflog::*head-pred*)
+  `(progn ,@(append (loop for pred in (reverse (remove-duplicates (mapcar #'first conflog::*head*)))
 		       collect `(:- (,pred ?what) (status ,pred ?what)))
 		    (loop for pred in (reverse *pred*)
-		       unless (member pred conflog::*head-pred*)
+		       unless (member pred (mapcar #'first conflog::*head*))
 		       collect `(:- (,pred ?what) (status ,pred ?what))))))
-;;; Conflog-featured Clim Gadgets
 
-(defmacro make-button ((name &key (callback #'default-callback) (init-status nil)) &rest pane-options)
+;;; Conflog-featured Clim Gadgets
+(defmacro make-button ((name &key (callback #'default-callback)) &rest pane-options)
   (pushnew name *pred*)
-  `(conflog-regist-on/off-status
+  `(conflog-regist-no-status
     (make-pane 'push-button
 	       ,@(generate-id/label name)
-	       :activate-callback ,callback ,@pane-options)
-    ,init-status))
+	       :activate-callback (lambda (gadget)
+				    (set-status/resolve (gadget-id gadget) (gensym))
+				    (funcall ,callback gadget)) ,@pane-options)))
 
 (defmacro make-selection (type (name &key (callback #'default-callback) (init-status nil)) selections &rest pane-options)
   (pushnew name *pred*)
@@ -114,8 +114,10 @@
 				     `(conflog-regist-on/off-status
 				       (make-pane 'toggle-button
 						  ,@(generate-id/label selection)
-						  :indicator-type ,(if (eq type 'radio-box) :one-of :some-of))
-				       'enable))
+						  :indicator-type ,(if (eq type 'radio-box) :one-of :some-of)
+						  :value-changed-callback (lambda (gadget value)
+									    (set-status/resolve (gadget-id gadget) (if value 'on 'off))))
+				       'off))
 				   selections)))
 	  (current ,(if (eq type 'radio-box)
 			`(or (gethash ',init-status *id/gadget* nil) (first choices))
@@ -165,6 +167,8 @@
 	       ,@pane-options)
     ,init-status))
 
+;;; Dialog
+(defvar *dialog* nil)
 (defmacro make-dialog (name
 		       (&rest control-list)
 		       (&rest control-layout)
@@ -185,7 +189,9 @@
 		(3/4 (labelling (:label "Conflog Log"),conflog-debug)))
 	    #-conflog-debug
 	    ,control-layout)))
-       (prog1 (make-instance ',name)
+       (prog1 (setf *dialog* (make-instance ',name))
+	 (clear-rules)
+	 (clear-status)
 	 ,@conflog-rules
 	 (conflog-compensate-rules)))))
 
@@ -193,5 +199,54 @@
   (clim-sys:make-process #'(lambda ()
 			     (apply #'run-frame-top-level dialog options))
 			 :name (format nil "~A" (frame-name dialog)))
-  (sleep 0.5)
-  (conflog-refresh-all))
+  (loop until (not (eq (frame-state dialog) :disowned)))
+  (conflog-refresh-all)
+  dialog)
+
+;;; primitives for gui operation
+(conflog::define-primitive enable/2 (pred status cont)
+  (let ((g (gethash pred *id/gadget* nil)))
+    (when g
+      (if (conflog::unbound-var-p status)
+	  (conflog::unify! status (if (gadget-active-p g) 'on 'off))
+	  (case (intern (symbol-name (conflog::deref status)) :keyword)
+	    (:off (deactivate-gadget g))
+	    (:on (activate-gadget g))))))
+  (funcall cont))
+
+(conflog::define-primitive show/2 (pred status cont)
+  (let ((g (gethash pred *id/gadget* nil)))
+    (when g
+      (if (conflog::unbound-var-p status)
+	  (conflog::unify! status (if (gadget-active-p g) 'on 'off))
+	  (case (intern (symbol-name (conflog::deref status)) :keyword)
+	    (:on (setf (sheet-enabled-p g) t))
+	    (:off (setf (sheet-enabled-p g) nil))))))
+  (funcall cont))
+
+(conflog::define-primitive enable-element/2 (pred-lst status-lst cont)
+  (mapc (lambda (pred status) (enable/2 pred status (lambda () t))) pred-lst status-lst)
+  (funcall cont))
+
+(conflog::define-primitive show-element/2 (pred-lst status-lst cont)
+  (mapc (lambda (pred status) (show/2 pred status (lambda () t))) pred-lst status-lst)
+  (funcall cont))
+
+(conflog::define-primitive message/3 (title text style cont)
+  (notify-user *dialog* (format nil "~5:i~A~5i" text) :title title :style style)
+  (funcall cont))
+
+(conflog::define-primitive message/2 (title text cont)
+  (message/3 "Info" text :inform cont))
+
+(conflog::define-primitive message/1 (text cont)
+  (message/3 "Info" text :inform cont))
+
+(conflog::define-primitive inform/1 (text cont)
+  (message/3 "Info" text :inform cont))
+
+(conflog::define-primitive warning/1 (text cont)
+  (message/3 "Warning" text :warning cont))
+
+(conflog::define-primitive error/1 (text cont)
+  (message/3 "Error" text :error cont))

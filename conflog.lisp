@@ -13,7 +13,7 @@
 (defmacro found? (val)
   `(not (eq ,val +N/A+)))
 
-(eval-when (:compile-toplevel)
+(eval-when (:compile-toplevel :load-toplevel)
   (defconstant +indent-amount+ 4))
 (defvar *indent-level* 0)
 (defmacro indent-format-line (&rest args)
@@ -154,6 +154,19 @@
   (when (some (lambda (v) (unify! item v)) (deref list))
     (funcall cont)))
 
+;;; Two awkward solution:
+;;; 1. To define not/1 as normal prolog pred, I have to re-add it in once the rules db is cleared.
+;;; 2. To define not/1 as conflog primitives, I have to keep and check the conflog-rule heads.
+;;; 
+;;; not(goal) :- call(goal), !, fail. 
+;;; not(goal).
+;;; 
+;; (define-primitive not/1 (goal cont)
+;;   (unless (if (head-pred-p (predicate goal)) ;Not an elegant way, but a quick workaround :(
+;; 	      (lookup/2 (predicate goal) (first (args goal)) (lambda () t))
+;; 	      (call/1 goal (lambda () t)))
+;;     (funcall cont)))
+
 (def-prolog-compiler-macro not
     (goal body cont bindings)
   (compile-body (cons `(if ,@(args goal) fail true) body) cont bindings))
@@ -161,12 +174,16 @@
 ;;; Conflict Rule
 (defvar *total-rules* 0)
 (defvar *relation* (make-hash-table))
-(defvar *head-pred* nil)
+(defvar *head* nil)
 
-(defun add-head-pred (head)
-  (pushnew (predicate head) *head-pred* :test #'equal))
+(defun add-head (head)
+  (pushnew head *head* :test #'equal))
+(defun head-p (head)
+  (find head *head* :test #'equal))
 (defun head-pred-p (pred)
-  (find pred *head-pred*))
+  (find pred *head* :key #'predicate))
+(defun find-heads-by-pred (pred)
+  (remove-if (lambda (head) (eq (predicate head) pred)) *head*))
 
 (defun add-relation (head body)
   (cond ((null body) nil)
@@ -180,7 +197,8 @@
 	   (add-relation head (rest body)))))
 
 (defmacro conflict-rule (head &body body)
-  (let ((rule-str (format nil "[~d] (:- ~S ~{~S~^ ~})" (incf *total-rules*) head body)))
+  (let ((rule-str (format nil "[~d] (:- ~S ~{~S~^ ~})" (incf *total-rules*) head body))
+	(head (if (string-equal (symbol-name (predicate head)) "$$") `(,(gensym "$$") ,@(args head)) head)))
     (declare (ignorable rule-str))
     `(progn
        (<- ,head
@@ -188,9 +206,9 @@
 	   ,@body)
 
        (add-relation ',head ',body)
-       (add-head-pred ',head)
+       (add-head ',head)
 
-       ,(unless (get (first head) 'prolog-compiler-macro)
+       ,(unless (or (get (first head) 'prolog-compiler-macro) (not (symbol-package (predicate head))))
 		`(def-prolog-compiler-macro ,(first head)
 		     (goal body cont bindings)
 		   (if (in-apply? (predicate goal))
@@ -209,7 +227,7 @@
   (setf *db-predicates* nil)
   (setf *total-rules* 0)
   (setf *relation* (make-hash-table))
-  (setf *head-pred* nil))
+  (setf *head* nil))
 
 (define-alias :- conflict-rule)
 
@@ -282,20 +300,6 @@
 
 (define-primitive ^/1 (pred cont)
   (when (eq (deref pred) *in-propogate*)
-    (funcall cont)))
-
-;;; Misc conflog primitives
-
-;;; Two awkward solution:
-;;; 1. To define not/1 as normal prolog pred, I have to re-add it in once the rules db is cleared.
-;;; 2. To define not/1 as conflog primitives, I have to keep and check the conflog-rule heads.
-;;; 
-;;; not(goal) :- call(goal), !, fail. 
-;;; not(goal).
-(define-primitive not/1 (goal cont)
-  (unless (if (head-pred-p (predicate goal)) ;Not an elegant way, but a quick workaround :(
-	      (lookup/2 (predicate goal) (first (args goal)) (lambda () t))
-	      (call/1 goal (lambda () t)))
     (funcall cont)))
 
 ;;; Low-level Interface

@@ -30,7 +30,8 @@
 			  #:variables-in
 			  #:top-level-query/0
 			  #:set-binding!
-			  #:var-p)
+			  #:var-p
+			  #:lisp)
   (:export #:|:-| #:?-
 	   #:clear-rules
 	   #:clear-status
@@ -47,5 +48,6 @@
 	   #:set-status
 	   #:set-status/resolve
 	   #:resolve
-	   #:regist))
+	   #:regist
+	   #:lisp))
 

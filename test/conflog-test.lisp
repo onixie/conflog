@@ -19,6 +19,8 @@
        ,(mapcar #'second asserts))))
 
 ;;; Tests
+
+;;; true/fail test
 (define-conflog-test T1 ((:- (A on) true))
   ((?- (A on)) t)
   ((?- (A ?what)) ((?what . on))))
@@ -26,6 +28,7 @@
 (define-conflog-test T2 ((:- (A on) fail))
   ((?- (A on)) nil))
 
+;;; backtracking test
 (define-conflog-test T3 ((:- (A ?what) (B ?what))
 			 (:- (B ?what) (status B ?what)))
   ((with-status ((B . on))
@@ -47,6 +50,7 @@
      (?- (A ?whatA) (B ?whatB) (C ?whatC))) 
    ((?whatA . on) (?whatB . on) (?whatC . on))))
 
+;;; primitive test
 (define-conflog-test T5 ((:- (A on) (status B ?what) (member ?what (A B C D))))
   ((?- (sstatus B A) (A on)) t)
   ((?- (sstatus B B) (A on)) t)
@@ -89,6 +93,7 @@
 	  (?- (A ?what)))
    ((?what . off))))
 
+;;; propogate test
 (define-conflog-test T10 ((:- (A on) (B off))
 			  (:- (A off) (B on))
 			  (:- (B ?what) (status B ?what)))
@@ -170,6 +175,7 @@
       (get-status '$VAL_MixedPaperPrint)))
    (ON ON GRAY OFF)))
 
+;;; not/and/or test
 (define-conflog-test T15 ((:- (A on) (not (B on)))
 			  (:- (A off) true)
 			  (:- (B off) true))
@@ -226,3 +232,57 @@
 	   (?- (not (not (or fail true))))
 	   )
    (nil t nil nil nil t t t nil t t)))
+
+(define-conflog-test T21 ((:- (A ?what) (B ?off) (or (== ?off off) (== ?off disable)) (= ?what on))
+			  (:- (B off))
+			  (:- (A off)))
+  ((?- (A ?what))
+   ((?what . on))))
+
+;;; Fixme: Smells like not correct
+;; (define-conflog-test T21 ((:- (A ?what)  (or (and (B ?off) (== ?off off)) (and (B ?off) (== ?off disable))) (= ?what on))
+;; 			  (:- (B off))
+;; 			  (:- (A off)))
+;;   ((?- (A ?what))
+;;    ((?what . off))))
+
+;;; anonymouse test
+(define-conflog-test T22 ((:- ($$ ?) (A ?any) (lisp (setf *A* 1)))
+			  (:- ($$ ?) (lisp (setf *A* 2)))
+			  (:- ($$ ?) (lisp (setf *A* 3)))
+			  (:- ($$ ?) (lisp (setf *A* 4)))
+			  (:- (A on)))
+  ((progn (defvar *A* 0) (resolve 'A) *A*)
+   1))
+
+(define-conflog-test T23 ((:- ($$ ?) (A ?any) (lisp (setf *A* 1)))
+			  (:- ($$ ?) (lisp (setf *A* 2)))
+			  (:- ($$ ?) (A ?any) (lisp (setf *A* 3)))
+			  (:- ($$ ?) (lisp (setf *A* 4)))
+			  (:- (A on)))
+  ((progn (defvar *A* 0) (resolve 'A) *A*)
+   3))
+
+(define-conflog-test T24 ((:- (__ ?) (A ?any) (lisp (setf *A* 1)))
+			  (:- (__ ?) (lisp (setf *A* 2)))
+			  (:- (__ ?) (lisp (setf *A* 3)))
+			  (:- (__ ?) (lisp (setf *A* 4)))
+			  (:- (A on)))
+  ((progn (defvar *A* 0) (resolve 'A) *A*)
+   4))
+
+(define-conflog-test T25 ((:- (__ ?) (A ?) (lisp (setf *A* 1)))
+			  (:- (__ ?) (lisp (setf *A* 2)))
+			  (:- (__ ?) (lisp (setf *A* 3)))
+			  (:- (__ ?) (lisp (setf *A* 4)))
+			  (:- (A on)))
+  ((progn (defvar *A* 0) (resolve 'A) *A*)
+   1))
+
+(define-conflog-test T26 ((:- (__ ?) (A ?any) (lisp (setf *A* 1)))
+			  (:- (__ ?) (lisp (setf *A* 2)))
+			  (:- (__ ?) (A ?) (lisp (setf *A* 3)))
+			  (:- (__ ?) (lisp (setf *A* 4)))
+			  (:- (A on)))
+  ((progn (defvar *A* 0) (resolve 'A) *A*)
+   3))
