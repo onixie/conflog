@@ -15,7 +15,8 @@
 						 Romney
 						 Johnson
 						 Stein)))
-	      (Rate (make-slider (Rate :init-status 0 :min 0 :max 5)))
+	      (Property (make-combo (Property :init-status '("1")) ("1" "2" "3")))
+	      (Rate (make-slider (Rate :init-status 0 :min 0 :max 3)))
 	      (Good-Nature (make-checkbox (Good-Nature) ((A "Understand the constitution of the United States of America")
 							 (B "Have a good knowledge of American History")
 							 (C "Understand the various types of political, social and economic systems")
@@ -29,6 +30,7 @@
 	     ;; Layouts
 	     (vertically ()
 	       Nominee
+	       Property
 	       Rate
 	       Good-Nature
 	       ;Comment
@@ -45,33 +47,22 @@
 	     ;; (:- (Quit disable) true)
 	     ;; (:- (Nominee ?what) (status Nominee ?what))
 	     ;; (:- (Comment ?what) (status Comment ?what))
-	     (:- (Nominee ?value) ($VAL_Nominee ?value) ($FNS_Nominee ?status)
-		 (or (and (== ?status disable) (show Nominee on) (enable Nominee off))
-		     (or (and (== ?status hide) (show Nominee off))
-			 (and (enable Nominee on) (show Nominee on)))))
 	     
-	     (:- ($VAL_Nominee ?value) (Nominee ?value))
-
-	     (:- ($FNS_Nominee ?status)
-	       (or (and (show Nominee ?off) (== ?off off) (= ?status hide))
-		   (or (and (enable Nominee ?off) (== ?off off) (= ?status disable))
-		       (= ?status on))))
 	     ;; 
-	     (:- (Good-Nature ?value) ($VAL_Good-Nature ?value) ($FNS_Good-Nature ?status)
-		 (or (and (== ?status disable) (show Good-Nature on) (enable Good-Nature off))
-		     (or (and (== ?status hide) (show Good-Nature off))
-			 (and (enable Good-Nature on) (show Good-Nature on)))))
-
-	     (:- ($VAL_Good-Nature (A D E)) ($VAL_Nominee Obama))
-	     (:- ($VAL_Good-Nature (C F)) ($VAL_Nominee Romney))
-	     (:- ($FNS_Good-Nature disable) ($VAL_Nominee Johnson))
-	     (:- ($FNS_Good-Nature hide) ($VAL_Nominee Stein) (message "Washed out Nominee"))
 	     
-	     (:- ($VAL_Good-Nature ?value) (Good-Nature ?value))
-	     (:- ($FNS_Good-Nature ?status)
-	       (or (and (enable Good-Nature ?off) (== ?off off) (= ?status disable))
-		   (or (and (show Good-Nature ?off) (== ?off off) (= ?status hide))
-		       (= ?status on))))
+	     (:- (Good-Nature (A D E)) (Nominee Obama))
+	     (:- (Good-Nature (C F)) (Nominee Romney))
+	     (:- (Good-Nature.Status disable) (Nominee Johnson))
+	     (:- (Good-Nature.Status hide) (Nominee Stein) (message "Washed out Nominee"))
+	     (:- (Good-Nature.Status on))
+
+	     (:- (Obama on) (Rate 0))
+	     (:- (Obama off))
+	     (:- (Obama on) (Nominee Obama))
+	     
+	     (:- (Nominee Romney) (Rate 1))
+	     (:- (Nominee Johnson) (Rate 2))
+	     (:- (Nominee Stein) (Rate 3))
 	     
 	     (:- ($$ ?) (Quit ?any) (inform "You are closing the pad."))
 	     (:- ($$ ?) (error "You should not see this"))))
