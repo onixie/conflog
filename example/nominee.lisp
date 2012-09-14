@@ -15,7 +15,7 @@
 						 Romney
 						 Johnson
 						 Stein)))
-	      (Property (make-combo (Property :init-status '("1")) ("1" "2" "3")))
+	      (Property (make-listbox (Property :init-status "1") ("1" "2" "3")))
 	      (Rate (make-slider (Rate :init-status 0 :min 0 :max 3)))
 	      (Good-Nature (make-checkbox (Good-Nature) ((A "Understand the constitution of the United States of America")
 							 (B "Have a good knowledge of American History")
@@ -58,11 +58,13 @@
 
 	     (:- (Obama on) (Rate 0))
 	     (:- (Obama off))
-	     (:- (Obama on) (Nominee Obama))
 	     
 	     (:- (Nominee Romney) (Rate 1))
 	     (:- (Nominee Johnson) (Rate 2))
 	     (:- (Nominee Stein) (Rate 3))
+
+	     (:- (Property.Status disable) (Nominee Stein))
+	     (:- (Property.Status on))
 	     
 	     (:- ($$ ?) (Quit ?any) (inform "You are closing the pad."))
 	     (:- ($$ ?) (error "You should not see this"))))

@@ -95,8 +95,10 @@
     (setf (gadget-value gadget) status)))
 
 (defun conflog-refresh-all ()
-  (loop for id being each hash-key in *id/gadget* using (hash-value gadget)
-     do (progn (refresh-status/resolve id))))
+  (loop for pred in (reverse *pred*)
+     do (progn (refresh-status/resolve pred)
+	       (refresh-status/resolve (symb pred '.value))
+	       (refresh-status/resolve (symb pred '.status)))))
 
 (defmacro conflog-gen-prologue-rules ()
   `(progn ,@(loop for pred in (reverse *pred*)
@@ -216,15 +218,21 @@
 	       ,@pane-options)
     ,init-status))
 
-(defmacro make-combo ((name &key (callback #'default-callback) (init-status nil)) selections &rest pane-options)
+(defmacro make-selection2 (type (name &key (callback #'default-callback) (init-status nil)) selections &rest pane-options)
   (pushnew name *pred*)
   `(conflog-regist-combo-status
-    (make-pane 'option-pane :id ',name :items ',selections :value ,init-status 
+    (make-pane ',type :id ',name :items ',selections :value ,init-status 
 	       :value-changed-callback (lambda (gadget value)
 					 (set-status/resolve (gadget-id gadget) value)
-					 (funcall ,callback gadget value)))
+					 (funcall ,callback gadget value))
+	       ,@pane-options)
     ,init-status))
 
+(defmacro make-combobox (&rest args)
+  `(make-selection2 option-pane ,@args))
+
+(defmacro make-listbox (&rest args)
+  `(make-selection2 list-pane ,@args))
 
 ;;; Dialog
 (defvar *dialog* nil)
