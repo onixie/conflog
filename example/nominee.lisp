@@ -1,4 +1,5 @@
-(in-package #:conflog-gui)
+(eval-when (:compile-toplevel :load-toplevel :execute)
+    (in-package #:conflog-gui))
 ;(climi::use-pixie)
 
 ;;; Nominee Pad
@@ -54,8 +55,7 @@
 	     (:- (Good-Nature (C F)) (Nominee Romney))
 	     (:- (Good-Nature.Status disable) (Nominee Johnson))
 	     (:- (Good-Nature.Status hide) (Nominee Stein) (message "Washed out Nominee"))
-	     (:- (Good-Nature.Status on))
-
+	     
 	     (:- (Obama on) (Rate 0))
 	     (:- (Obama off))
 	     
@@ -63,8 +63,9 @@
 	     (:- (Nominee Johnson) (Rate 2))
 	     (:- (Nominee Stein) (Rate 3))
 
+	     (:- (Property.Status unsupport) (Nominee Johnson))
 	     (:- (Property.Status disable) (Nominee Stein))
-	     (:- (Property.Status on))
 	     
+
 	     (:- ($$ ?) (Quit ?any) (inform "You are closing the pad."))
 	     (:- ($$ ?) (error "You should not see this"))))
